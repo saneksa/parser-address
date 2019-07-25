@@ -1,51 +1,59 @@
 package main
 
 import (
-	"encoding/xml"
+	"bufio"
 	"fmt"
-	"io/ioutil"
+	xmlparser "github.com/tamerh/xml-stream-parser"
 	"log"
 	"os"
+	"sync"
 	"time"
 )
 
-type CityList struct {
-	XMLName xml.Name `xml:"root"`
-	Items   []City   `xml:"item"`
-}
-
 type City struct {
-	XMLName  xml.Name `xml:"item"`
-	CityName string   `xml:"city,attr"`
-	Street   string   `xml:"street,attr"`
-	House    string   `xml:"house,attr"`
-	Floor    string   `xml:"floor,attr"`
+	CityName string
+	Street   string
+	House    string
+	Floor    string
 }
 
-func parseXml(path string) CityList {
+func parseXml(path string) []City {
+	startTime := time.Now()
+	fmt.Println("start parse ")
 	xmlFile, err := os.Open(path)
+
+	var arr []City
 
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	br := bufio.NewReaderSize(xmlFile, 65536)
+	parser := xmlparser.NewXMLParser(br, "item")
+
+	for Xml := range parser.Stream() {
+		arr = append(arr, City{
+			Xml.Attrs["city"],
+			Xml.Attrs["street"],
+			Xml.Attrs["house"],
+			Xml.Attrs["floor"],
+		})
 	}
 
 	defer xmlFile.Close()
 
-	var root CityList
+	fmt.Println("end parse", time.Since(startTime))
 
-	byteValue, _ := ioutil.ReadAll(xmlFile)
-	err = xml.Unmarshal(byteValue, &root)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-	return root
+	return arr
 }
 
-func getAmountFloor(cityList CityList) map[string]map[string]int {
+func getAmountFloor(cityList []City, wg *sync.WaitGroup) {
+	defer wg.Done()
 	amountFloor := make(map[string]map[string]int)
+	startTime := time.Now()
+	fmt.Println("start count floor")
 
-	for _, city := range cityList.Items {
+	for _, city := range cityList {
 		if amountFloor[city.CityName] == nil {
 			amountFloor[city.CityName] = map[string]int{
 				"1": 0,
@@ -58,37 +66,43 @@ func getAmountFloor(cityList CityList) map[string]map[string]int {
 
 		amountFloor[city.CityName][city.Floor]++
 	}
-	return amountFloor
+
+	defer fmt.Println("end count floor: ", time.Since(startTime))
+	defer fmt.Println("result ", amountFloor)
 }
 
-func findDuplicates(elements []City) map[City]int {
-	temp := map[City]int{}
-	res := make(map[City]int)
+func findDuplicates(cityList []City, wg *sync.WaitGroup) {
+	defer wg.Done()
+	startTime := time.Now()
+	fmt.Println("start find duplicates")
 
-	for _, city := range elements {
+	temp := make(map[City]int)
+	duplicates := make(map[City]int)
+
+	for _, city := range cityList {
 		_, ok := temp[city]
 		if ok {
 			temp[city]++
-			res[city] = temp[city]
+			duplicates[city] = temp[city]
 		} else {
 			temp[city] = 1
 		}
 	}
-	return res
+	defer fmt.Println("end find duplicates: ", time.Since(startTime))
+	defer fmt.Println("Duplicates count: ", duplicates)
+
 }
 
 func main() {
-
-	startTime := time.Now()
-	fmt.Println("start parse ")
-
+	startTotalTime := time.Now()
+	wg := new(sync.WaitGroup)
 	cityList := parseXml("./address.xml")
-	fmt.Println("end parse: ", time.Since(startTime))
-	_ = getAmountFloor(cityList)
-	fmt.Println("end count floor: ", time.Since(startTime))
-	duplicates := findDuplicates(cityList.Items)
-	fmt.Println("end find duplicates: ", time.Since(startTime))
-	//fmt.Println(amountFloor)
-	fmt.Println("Duplicates count: ", len(duplicates), "\n", duplicates)
-	fmt.Println(time.Since(startTime))
+	wg.Add(2)
+
+	go findDuplicates(cityList, wg)
+	go getAmountFloor(cityList, wg)
+
+	wg.Wait()
+	fmt.Println("total time work program: ", time.Since(startTotalTime))
+
 }
