@@ -3,10 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"sync"
+	//"github.com/olekukonko/tablewriter"
 	xmlparser "github.com/tamerh/xml-stream-parser"
 	"log"
 	"os"
-	"sync"
 	"time"
 )
 
@@ -17,7 +18,8 @@ type City struct {
 	Floor    string
 }
 
-func parseXml(path string) []City {
+func parseXml(path string, duplCh, floorCh chan []City, wg *sync.WaitGroup) {
+	defer wg.Done()
 	startTime := time.Now()
 	fmt.Println("start parse ")
 	xmlFile, err := os.Open(path)
@@ -32,11 +34,13 @@ func parseXml(path string) []City {
 	parser := xmlparser.NewXMLParser(br, "item")
 
 	for Xml := range parser.Stream() {
+		xmlAttr := Xml.Attrs
+
 		arr = append(arr, City{
-			Xml.Attrs["city"],
-			Xml.Attrs["street"],
-			Xml.Attrs["house"],
-			Xml.Attrs["floor"],
+			xmlAttr["city"],
+			xmlAttr["street"],
+			xmlAttr["house"],
+			xmlAttr["floor"],
 		})
 	}
 
@@ -44,11 +48,13 @@ func parseXml(path string) []City {
 
 	fmt.Println("end parse", time.Since(startTime))
 
-	return arr
+	duplCh <- arr
+	floorCh <- arr
 }
 
-func getAmountFloor(cityList []City, wg *sync.WaitGroup) {
+func getAmountFloor(floorCh chan []City, wg *sync.WaitGroup) {
 	defer wg.Done()
+	cityList := <-floorCh
 	amountFloor := make(map[string]map[string]int)
 	startTime := time.Now()
 	fmt.Println("start count floor")
@@ -71,8 +77,9 @@ func getAmountFloor(cityList []City, wg *sync.WaitGroup) {
 	defer fmt.Println("result ", amountFloor)
 }
 
-func findDuplicates(cityList []City, wg *sync.WaitGroup) {
+func findDuplicates(duplCh chan []City, wg *sync.WaitGroup) {
 	defer wg.Done()
+	cityList := <-duplCh
 	startTime := time.Now()
 	fmt.Println("start find duplicates")
 
@@ -90,17 +97,19 @@ func findDuplicates(cityList []City, wg *sync.WaitGroup) {
 	}
 	defer fmt.Println("end find duplicates: ", time.Since(startTime))
 	defer fmt.Println("Duplicates count: ", duplicates)
-
 }
 
 func main() {
 	startTotalTime := time.Now()
 	wg := new(sync.WaitGroup)
-	cityList := parseXml("./address.xml")
-	wg.Add(2)
 
-	go findDuplicates(cityList, wg)
-	go getAmountFloor(cityList, wg)
+	wg.Add(3)
+	floorCh := make(chan []City, 1)
+	duplCh := make(chan []City, 1)
+
+	go parseXml("./address.xml", duplCh, floorCh, wg)
+	go findDuplicates(duplCh, wg)
+	go getAmountFloor(floorCh, wg)
 
 	wg.Wait()
 	fmt.Println("total time work program: ", time.Since(startTotalTime))
