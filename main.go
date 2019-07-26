@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
-	"sync"
-	//"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter"
 	xmlparser "github.com/tamerh/xml-stream-parser"
+	"io"
 	"log"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -18,100 +21,187 @@ type City struct {
 	Floor    string
 }
 
-func parseXml(path string, duplCh, floorCh chan []City, wg *sync.WaitGroup) {
-	defer wg.Done()
+type TasksChan struct {
+	floorCh chan City
+	duplCh  chan City
+}
+
+func parseXml(path string, tasksChan TasksChan, wg *sync.WaitGroup) {
 	startTime := time.Now()
 	fmt.Println("start parse ")
 	xmlFile, err := os.Open(path)
-
-	var arr []City
+	defer wg.Done()
+	defer close(tasksChan.duplCh)
+	defer close(tasksChan.floorCh)
+	defer xmlFile.Close()
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	br := bufio.NewReaderSize(xmlFile, 65536)
+	br := bufio.NewReaderSize(xmlFile, 64*1024)
 	parser := xmlparser.NewXMLParser(br, "item")
 
 	for Xml := range parser.Stream() {
+		if Xml.Err != nil {
+			log.Fatal(Xml.Err)
+		}
+
 		xmlAttr := Xml.Attrs
 
-		arr = append(arr, City{
+		city := City{
 			xmlAttr["city"],
 			xmlAttr["street"],
 			xmlAttr["house"],
 			xmlAttr["floor"],
+		}
+
+		tasksChan.floorCh <- city
+		tasksChan.duplCh <- city
+	}
+
+	fmt.Println("end parse", time.Since(startTime))
+}
+
+func getAmountFloor(floorCh chan City, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	amountFloor := make(map[string]map[string]int)
+	fmt.Println("start count floor")
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Город", "1 этажей", "2 этажей", "3 этажей", "4 этажей", "5 этажей"})
+	table.SetAlignment(tablewriter.ALIGN_CENTER)
+
+	for {
+		if city, ok := <-floorCh; ok {
+			if _, ok := amountFloor[city.CityName]; !ok {
+				amountFloor[city.CityName] = map[string]int{
+					"1": 0,
+					"2": 0,
+					"3": 0,
+					"4": 0,
+					"5": 0,
+				}
+			}
+
+			amountFloor[city.CityName][city.Floor]++
+
+		} else {
+			break
+		}
+	}
+
+	for val := range amountFloor {
+		af := amountFloor[val]
+
+		table.Append([]string{
+			val,
+			strconv.Itoa(af["1"]),
+			strconv.Itoa(af["2"]),
+			strconv.Itoa(af["3"]),
+			strconv.Itoa(af["4"]),
+			strconv.Itoa(af["5"]),
 		})
 	}
 
-	defer xmlFile.Close()
-
-	fmt.Println("end parse", time.Since(startTime))
-
-	duplCh <- arr
-	floorCh <- arr
+	defer table.Render()
+	defer fmt.Println("Количество этажей в городах")
 }
 
-func getAmountFloor(floorCh chan []City, wg *sync.WaitGroup) {
+func findDuplicates(duplCh chan City, wg *sync.WaitGroup) {
 	defer wg.Done()
-	cityList := <-floorCh
-	amountFloor := make(map[string]map[string]int)
-	startTime := time.Now()
-	fmt.Println("start count floor")
 
-	for _, city := range cityList {
-		if amountFloor[city.CityName] == nil {
-			amountFloor[city.CityName] = map[string]int{
-				"1": 0,
-				"2": 0,
-				"3": 0,
-				"4": 0,
-				"5": 0,
-			}
-		}
-
-		amountFloor[city.CityName][city.Floor]++
-	}
-
-	defer fmt.Println("end count floor: ", time.Since(startTime))
-	defer fmt.Println("result ", amountFloor)
-}
-
-func findDuplicates(duplCh chan []City, wg *sync.WaitGroup) {
-	defer wg.Done()
-	cityList := <-duplCh
-	startTime := time.Now()
 	fmt.Println("start find duplicates")
 
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Город", "Улица", "№ Дома", "Этаж", "Повторов"})
+	table.SetAlignment(tablewriter.ALIGN_CENTER)
 	temp := make(map[City]int)
 	duplicates := make(map[City]int)
 
-	for _, city := range cityList {
-		_, ok := temp[city]
-		if ok {
-			temp[city]++
-			duplicates[city] = temp[city]
+	for {
+		if city, ok := <-duplCh; ok {
+			_, ok := temp[city]
+			if ok {
+				temp[city]++
+				duplicates[city] = temp[city]
+			} else {
+				temp[city] = 1
+			}
 		} else {
-			temp[city] = 1
+			break
 		}
 	}
-	defer fmt.Println("end find duplicates: ", time.Since(startTime))
-	defer fmt.Println("Duplicates count: ", duplicates)
+
+	for val := range duplicates {
+		table.Append([]string{
+			val.CityName,
+			val.Street,
+			val.House,
+			val.Floor,
+			strconv.Itoa(duplicates[val]),
+		})
+	}
+
+	defer table.Render()
+	defer fmt.Println("Дубликаты")
+}
+
+func lineCounter(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer file.Close()
+
+	buf := make([]byte, 32*1024)
+	count := 0
+	lineSep := []byte{'\n'}
+
+	for {
+		c, err := file.Read(buf)
+		count += bytes.Count(buf[:c], lineSep)
+
+		switch {
+		case err == io.EOF:
+			return count, nil
+
+		case err != nil:
+			return count, err
+		}
+	}
 }
 
 func main() {
 	startTotalTime := time.Now()
 	wg := new(sync.WaitGroup)
-
 	wg.Add(3)
-	floorCh := make(chan []City, 1)
-	duplCh := make(chan []City, 1)
 
-	go parseXml("./address.xml", duplCh, floorCh, wg)
-	go findDuplicates(duplCh, wg)
-	go getAmountFloor(floorCh, wg)
+	var path string
+	args := os.Args
+	if len(args) < 2 {
+		fmt.Println("Путь до *.xml файла не задан!")
+		os.Exit(0)
+	} else {
+		path = args[1]
+	}
+
+	lineCount, err := lineCounter(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	tasksChan := TasksChan{
+		make(chan City, lineCount),
+		make(chan City, lineCount),
+	}
+
+	go parseXml(path, tasksChan, wg)
+	go findDuplicates(tasksChan.duplCh, wg)
+	go getAmountFloor(tasksChan.floorCh, wg)
 
 	wg.Wait()
 	fmt.Println("total time work program: ", time.Since(startTotalTime))
-
 }
