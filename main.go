@@ -9,35 +9,36 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
 )
 
 type City struct {
-	CityName string
-	Street   string
-	House    string
-	Floor    string
+	CityName,
+	Street,
+	House,
+	Floor string
 }
 
 type TasksChan struct {
-	floorCh chan City
-	duplCh  chan City
+	floorCh,
+	duplCh chan City
 }
 
 func parseXml(path string, tasksChan TasksChan, wg *sync.WaitGroup) {
-	startTime := time.Now()
 	fmt.Println("start parse ")
 	xmlFile, err := os.Open(path)
 	defer wg.Done()
 	defer close(tasksChan.duplCh)
 	defer close(tasksChan.floorCh)
-	defer xmlFile.Close()
 
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	defer xmlFile.Close()
 
 	br := bufio.NewReaderSize(xmlFile, 64*1024)
 	parser := xmlparser.NewXMLParser(br, "item")
@@ -59,8 +60,6 @@ func parseXml(path string, tasksChan TasksChan, wg *sync.WaitGroup) {
 		tasksChan.floorCh <- city
 		tasksChan.duplCh <- city
 	}
-
-	fmt.Println("end parse", time.Since(startTime))
 }
 
 func getAmountFloor(floorCh chan City, wg *sync.WaitGroup) {
@@ -150,6 +149,7 @@ func findDuplicates(duplCh chan City, wg *sync.WaitGroup) {
 
 func lineCounter(path string) (int, error) {
 	file, err := os.Open(path)
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -175,6 +175,8 @@ func lineCounter(path string) (int, error) {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	startTotalTime := time.Now()
 	wg := new(sync.WaitGroup)
 	wg.Add(3)
