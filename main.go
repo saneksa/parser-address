@@ -72,23 +72,18 @@ func getAmountFloor(floorCh chan City, wg *sync.WaitGroup) {
 	table.SetHeader([]string{"Город", "1 этажей", "2 этажей", "3 этажей", "4 этажей", "5 этажей"})
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
 
-	for {
-		if city, ok := <-floorCh; ok {
-			if _, ok := amountFloor[city.CityName]; !ok {
-				amountFloor[city.CityName] = map[string]int{
-					"1": 0,
-					"2": 0,
-					"3": 0,
-					"4": 0,
-					"5": 0,
-				}
+	for city := range floorCh {
+		if _, ok := amountFloor[city.CityName]; !ok {
+			amountFloor[city.CityName] = map[string]int{
+				"1": 0,
+				"2": 0,
+				"3": 0,
+				"4": 0,
+				"5": 0,
 			}
-
-			amountFloor[city.CityName][city.Floor]++
-
-		} else {
-			break
 		}
+
+		amountFloor[city.CityName][city.Floor]++
 	}
 
 	for val := range amountFloor {
@@ -119,17 +114,13 @@ func findDuplicates(duplCh chan City, wg *sync.WaitGroup) {
 	temp := make(map[City]int)
 	duplicates := make(map[City]int)
 
-	for {
-		if city, ok := <-duplCh; ok {
-			_, ok := temp[city]
-			if ok {
-				temp[city]++
-				duplicates[city] = temp[city]
-			} else {
-				temp[city] = 1
-			}
+	for city := range duplCh {
+		_, ok := temp[city]
+		if ok {
+			temp[city]++
+			duplicates[city] = temp[city]
 		} else {
-			break
+			temp[city] = 1
 		}
 	}
 
