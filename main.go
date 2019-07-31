@@ -6,6 +6,7 @@ import (
 	xmlparser "github.com/tamerh/xml-stream-parser"
 	"log"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -94,9 +95,21 @@ func findDuplicates(cityList []City, wg *sync.WaitGroup) {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	startTotalTime := time.Now()
 	wg := new(sync.WaitGroup)
-	cityList := parseXml("./address.xml")
+
+	var path string
+	args := os.Args
+	if len(args) < 2 {
+		fmt.Println("Путь до *.xml файла не задан!")
+		os.Exit(0)
+	} else {
+		path = args[1]
+	}
+
+	cityList := parseXml(path)
 	wg.Add(2)
 
 	go findDuplicates(cityList, wg)
